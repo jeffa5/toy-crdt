@@ -1,3 +1,4 @@
+use clap::Parser;
 use stateright::actor::model_peers;
 use stateright::actor::register::RegisterActor;
 use stateright::actor::register::RegisterActorState;
@@ -6,6 +7,7 @@ use stateright::actor::Actor;
 use stateright::actor::ActorModel;
 use stateright::actor::Network;
 use stateright::actor::Out;
+use stateright::Checker;
 use stateright::{actor::Id, Model};
 use std::collections::{BTreeSet, HashSet};
 use std::fmt::Debug;
@@ -132,13 +134,13 @@ impl Actor for Peer {
 
     type State = TC;
 
-    fn on_start(&self, id: Id, o: &mut Out<Self>) -> Self::State {
+    fn on_start(&self, id: Id, _o: &mut Out<Self>) -> Self::State {
         Self::State::new(id)
     }
 
     fn on_msg(
         &self,
-        id: Id,
+        _id: Id,
         state: &mut std::borrow::Cow<Self::State>,
         src: Id,
         msg: Self::Msg,
@@ -149,6 +151,8 @@ impl Actor for Peer {
                 let key = 'b';
                 // apply the op locally
                 let timestamp = state.to_mut().set(key, value);
+
+                o.send(src, RegisterMsg::PutOk(id));
 
                 o.broadcast(
                     &self.peers,
@@ -189,7 +193,7 @@ impl Actor for Peer {
 }
 
 struct ModelCfg {
-    clients: u32,
+    clients: usize,
     servers: usize,
 }
 
@@ -217,26 +221,11 @@ impl ModelCfg {
             )
             .property(
                 stateright::Expectation::Always,
-                "all actors have the same value for all keys",
-                |_, state| all_same_state(&state.actor_states),
-            )
-            .property(
-                stateright::Expectation::Always,
                 "only have one value for each key",
                 |_, state| only_one_of_each_key(&state.actor_states),
             )
             .init_network(Network::new_ordered(vec![]))
     }
-}
-
-fn main() {
-    ModelCfg {
-        clients: 2,
-        servers: 2,
-    }
-    .into_actor_model()
-    .checker()
-    .serve("127.0.0.1:8080");
 }
 
 fn all_same_state(actors: &[Arc<RegisterActorState<TC, u64>>]) -> bool {
@@ -262,4 +251,42 @@ fn only_one_of_each_key(actors: &[Arc<RegisterActorState<TC, u64>>]) -> bool {
         }
     }
     true
+}
+
+#[derive(Parser)]
+struct Opts {
+    #[clap(subcommand)]
+    command: SubCmd,
+
+    #[clap(long, short, global = true, default_value = "2")]
+    clients: usize,
+
+    #[clap(long, short, global = true, default_value = "2")]
+    servers: usize,
+}
+
+#[derive(clap::Subcommand)]
+enum SubCmd {
+    Serve,
+    Check,
+}
+
+fn main() {
+    let opts = Opts::parse();
+
+    let model = ModelCfg {
+        clients: opts.clients,
+        servers: opts.servers,
+    }
+    .into_actor_model()
+    .checker();
+
+    match opts.command {
+        SubCmd::Serve => {
+            model.serve("127.0.0.1:8080");
+        }
+        SubCmd::Check => {
+            model.spawn_dfs().join().assert_properties();
+        }
+    }
 }
