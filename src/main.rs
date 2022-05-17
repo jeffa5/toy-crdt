@@ -505,11 +505,12 @@ impl ModelCfg {
                 "all actors have the same value for all keys",
                 |_, state| all_same_state(&state.actor_states),
             )
-            .property(
-                stateright::Expectation::Always,
-                "only have one value for each key",
-                |_, state| only_one_of_each_key(&state.actor_states),
-            )
+            // only valid for broken one as conflicting values are retained in the fixed version
+            // .property(
+            //     stateright::Expectation::Always,
+            //     "only have one value for each key",
+            //     |_, state| only_one_of_each_key(&state.actor_states),
+            // )
             .property(
                 stateright::Expectation::Always,
                 "in sync when syncing is done and no in-flight requests",
