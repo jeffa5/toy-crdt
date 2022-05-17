@@ -2,6 +2,7 @@ use clap::Parser;
 use stateright::actor::model_peers;
 use stateright::actor::Actor;
 use stateright::actor::ActorModel;
+use stateright::actor::ActorModelState;
 use stateright::actor::Network;
 use stateright::actor::Out;
 use stateright::Checker;
@@ -186,9 +187,16 @@ impl Actor for Peer {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum MyRegisterActor {
-    Client {
+    PutClient {
         put_count: usize,
+        /// Whether to send a get request after each mutation
+        intermediate_gets: bool,
+        server_count: usize,
+    },
+    DeleteClient {
         delete_count: usize,
+        /// Whether to send a get request after each mutation
+        intermediate_gets: bool,
         server_count: usize,
     },
     Server(Peer),
@@ -196,7 +204,11 @@ enum MyRegisterActor {
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
 enum MyRegisterActorState {
-    Client {
+    PutClient {
+        awaiting: Option<RequestId>,
+        op_count: usize,
+    },
+    DeleteClient {
         awaiting: Option<RequestId>,
         op_count: usize,
     },
@@ -233,9 +245,10 @@ impl Actor for MyRegisterActor {
 
     fn on_start(&self, id: Id, o: &mut Out<Self>) -> Self::State {
         match self {
-            MyRegisterActor::Client {
+            MyRegisterActor::PutClient {
                 put_count,
-                delete_count,
+                // don't issue reads from this so don't worry about this
+                intermediate_gets: _,
                 server_count,
             } => {
                 let server_count = *server_count;
@@ -246,28 +259,47 @@ impl Actor for MyRegisterActor {
                 }
 
                 if *put_count > 0 {
-                    let unique_request_id = 1 * index; // next will be 2 * index
-                    let value = (b'A' + (index - server_count) as u8) as char;
+                    let unique_request_id = index; // next will be 2 * index
+                    let value = (b'A' + (index % server_count) as u8) as char;
                     o.send(
-                        Id::from((index + 0) % server_count),
+                        Id::from(index % server_count),
                         MyRegisterMsg::Put(unique_request_id, value),
                     );
-                    MyRegisterActorState::Client {
-                        awaiting: Some(unique_request_id),
-                        op_count: 1,
-                    }
-                } else if *delete_count > 0 {
-                    let unique_request_id = 1 * index; // next will be 2 * index
-                    o.send(
-                        Id::from((index + 0) % server_count),
-                        MyRegisterMsg::Delete(unique_request_id),
-                    );
-                    MyRegisterActorState::Client {
+                    MyRegisterActorState::PutClient {
                         awaiting: Some(unique_request_id),
                         op_count: 1,
                     }
                 } else {
-                    MyRegisterActorState::Client {
+                    MyRegisterActorState::PutClient {
+                        awaiting: None,
+                        op_count: 0,
+                    }
+                }
+            }
+            MyRegisterActor::DeleteClient {
+                delete_count,
+                intermediate_gets: _,
+                server_count,
+            } => {
+                let server_count = *server_count;
+
+                let index: usize = id.into();
+                if index < server_count {
+                    panic!("MyRegisterActor clients must be added to the model after servers.");
+                }
+
+                if *delete_count > 0 {
+                    let unique_request_id = index; // next will be 2 * index
+                    o.send(
+                        Id::from(index % server_count),
+                        MyRegisterMsg::Delete(unique_request_id),
+                    );
+                    MyRegisterActorState::DeleteClient {
+                        awaiting: Some(unique_request_id),
+                        op_count: 1,
+                    }
+                } else {
+                    MyRegisterActorState::DeleteClient {
                         awaiting: None,
                         op_count: 0,
                     }
@@ -296,12 +328,12 @@ impl Actor for MyRegisterActor {
 
         match (self, &**state) {
             (
-                A::Client {
+                A::PutClient {
                     put_count,
-                    delete_count,
+                    intermediate_gets,
                     server_count,
                 },
-                S::Client {
+                S::PutClient {
                     awaiting: Some(awaiting),
                     op_count,
                 },
@@ -312,69 +344,93 @@ impl Actor for MyRegisterActor {
                         let index: usize = id.into();
                         let unique_request_id = (op_count + 1) * index;
                         if *op_count < *put_count {
-                            let value = (b'Z' - (index - server_count) as u8) as char;
+                            let value = (b'Z' - (index % server_count) as u8) as char;
                             o.send(
-                                Id::from((index + op_count) % server_count),
+                                Id::from(index % server_count),
                                 MyRegisterMsg::Put(unique_request_id, value),
                             );
-                        } else {
+                            *state = Cow::Owned(MyRegisterActorState::PutClient {
+                                awaiting: Some(unique_request_id),
+                                op_count: op_count + 1,
+                            });
+                        } else if *intermediate_gets {
                             o.send(
-                                Id::from((index + op_count) % server_count),
+                                Id::from(index % server_count),
                                 MyRegisterMsg::Get(unique_request_id),
                             );
-                        }
-                        *state = Cow::Owned(MyRegisterActorState::Client {
-                            awaiting: Some(unique_request_id),
-                            op_count: op_count + 1,
-                        });
-                    }
-                    MyRegisterMsg::GetOk(request_id, _value) if &request_id == awaiting => {
-                        // done with puts but we may still want to run some deletes
-                        if *delete_count > 0 {
-                            let index: usize = id.into();
-                            let unique_request_id = (op_count + 1) * index;
-                            if *op_count < *delete_count {
-                                o.send(
-                                    Id::from((index + op_count) % server_count),
-                                    MyRegisterMsg::Delete(unique_request_id),
-                                );
-                            } else {
-                                o.send(
-                                    Id::from((index + op_count) % server_count),
-                                    MyRegisterMsg::Get(unique_request_id),
-                                );
-                            }
-                            *state = Cow::Owned(MyRegisterActorState::Client {
+                            *state = Cow::Owned(MyRegisterActorState::PutClient {
                                 awaiting: Some(unique_request_id),
                                 op_count: op_count + 1,
                             });
                         } else {
-                            *state = Cow::Owned(MyRegisterActorState::Client {
+                            *state = Cow::Owned(MyRegisterActorState::PutClient {
                                 awaiting: None,
                                 op_count: op_count + 1,
                             });
                         }
+                    }
+                    MyRegisterMsg::GetOk(request_id, _value) if &request_id == awaiting => {
+                        // finished
+                        *state = Cow::Owned(MyRegisterActorState::PutClient {
+                            awaiting: None,
+                            op_count: op_count + 1,
+                        });
+                    }
+                    MyRegisterMsg::DeleteOk(request_id) if &request_id == awaiting => {}
+                    MyRegisterMsg::PutOk(_) => {}
+                    MyRegisterMsg::GetOk(_, _) => {}
+                    MyRegisterMsg::DeleteOk(_) => {}
+                    MyRegisterMsg::Put(_, _) => {}
+                    MyRegisterMsg::Get(_) => {}
+                    MyRegisterMsg::Delete(_) => {}
+                    MyRegisterMsg::Internal(_) => {}
+                }
+            }
+            (
+                A::DeleteClient {
+                    delete_count,
+                    intermediate_gets,
+                    server_count,
+                },
+                S::DeleteClient {
+                    awaiting: Some(awaiting),
+                    op_count,
+                },
+            ) => {
+                let server_count = *server_count;
+                match msg {
+                    MyRegisterMsg::PutOk(_) => {}
+                    MyRegisterMsg::GetOk(request_id, _value) if &request_id == awaiting => {
+                        // finished
+                        *state = Cow::Owned(MyRegisterActorState::DeleteClient {
+                            awaiting: None,
+                            op_count: op_count + 1,
+                        });
                     }
                     MyRegisterMsg::DeleteOk(request_id) if &request_id == awaiting => {
                         let index: usize = id.into();
                         let unique_request_id = (op_count + 1) * index;
                         if *op_count < *delete_count {
                             o.send(
-                                Id::from((index + op_count) % server_count),
+                                Id::from(index % server_count),
                                 MyRegisterMsg::Delete(unique_request_id),
                             );
-                        } else {
+                        } else if *intermediate_gets {
                             o.send(
-                                Id::from((index + op_count) % server_count),
+                                Id::from(index % server_count),
                                 MyRegisterMsg::Get(unique_request_id),
                             );
+                            *state = Cow::Owned(MyRegisterActorState::DeleteClient {
+                                awaiting: Some(unique_request_id),
+                                op_count: op_count + 1,
+                            });
+                        } else {
+                            *state = Cow::Owned(MyRegisterActorState::DeleteClient {
+                                awaiting: None,
+                                op_count: op_count + 1,
+                            });
                         }
-                        *state = Cow::Owned(MyRegisterActorState::Client {
-                            awaiting: Some(unique_request_id),
-                            op_count: op_count + 1,
-                        });
                     }
-                    MyRegisterMsg::PutOk(_) => {}
                     MyRegisterMsg::GetOk(_, _) => {}
                     MyRegisterMsg::DeleteOk(_) => {}
                     MyRegisterMsg::Put(_, _) => {}
@@ -392,16 +448,51 @@ impl Actor for MyRegisterActor {
                 }
                 o.append(&mut server_out);
             }
-            (A::Server(_), S::Client { .. }) => {}
-            (A::Client { .. }, S::Server(_)) => {}
+            (A::Server(_), S::PutClient { .. }) => {}
+            (A::Server(_), S::DeleteClient { .. }) => {}
+            (A::PutClient { .. }, S::Server(_)) => {}
+            (A::DeleteClient { .. }, S::Server(_)) => {}
             (
-                A::Client {
+                A::PutClient {
                     put_count: _,
-                    delete_count: _,
+                    intermediate_gets: _,
                     server_count: _,
                 },
-                S::Client {
+                S::PutClient {
                     awaiting: None,
+                    op_count: _,
+                },
+            ) => {}
+            (
+                A::DeleteClient {
+                    delete_count: _,
+                    intermediate_gets: _,
+                    server_count: _,
+                },
+                S::DeleteClient {
+                    awaiting: None,
+                    op_count: _,
+                },
+            ) => {}
+            (
+                A::PutClient {
+                    put_count: _,
+                    intermediate_gets: _,
+                    server_count: _,
+                },
+                S::DeleteClient {
+                    awaiting: _,
+                    op_count: _,
+                },
+            ) => {}
+            (
+                A::DeleteClient {
+                    delete_count: _,
+                    intermediate_gets: _,
+                    server_count: _,
+                },
+                S::PutClient {
+                    awaiting: _,
                     op_count: _,
                 },
             ) => {}
@@ -412,7 +503,10 @@ impl Actor for MyRegisterActor {
         use MyRegisterActor as A;
         use MyRegisterActorState as S;
         match (self, &**state) {
-            (A::Client { .. }, S::Client { .. }) => {}
+            (A::PutClient { .. }, S::PutClient { .. }) => {}
+            (A::PutClient { .. }, S::DeleteClient { .. }) => {}
+            (A::DeleteClient { .. }, S::DeleteClient { .. }) => {}
+            (A::DeleteClient { .. }, S::PutClient { .. }) => {}
             (A::Server(server_actor), S::Server(server_state)) => {
                 let mut server_state = Cow::Borrowed(server_state);
                 let mut server_out = Out::new();
@@ -422,15 +516,19 @@ impl Actor for MyRegisterActor {
                 }
                 o.append(&mut server_out);
             }
-            (A::Server(_), S::Client { .. }) => {}
-            (A::Client { .. }, S::Server(_)) => {}
+            (A::Server(_), S::PutClient { .. }) => {}
+            (A::Server(_), S::DeleteClient { .. }) => {}
+            (A::PutClient { .. }, S::Server(_)) => {}
+            (A::DeleteClient { .. }, S::Server(_)) => {}
         }
     }
 }
 
 struct ModelCfg {
-    clients: usize,
+    put_clients: usize,
+    delete_clients: usize,
     servers: usize,
+    intermediate_gets: bool,
 }
 
 impl ModelCfg {
@@ -442,10 +540,18 @@ impl ModelCfg {
             }))
         }
 
-        for _ in 0..self.clients {
-            model = model.actor(MyRegisterActor::Client {
-                put_count: 1,
-                delete_count: 1,
+        for _ in 0..self.put_clients {
+            model = model.actor(MyRegisterActor::PutClient {
+                put_count: 2,
+                intermediate_gets: self.intermediate_gets,
+                server_count: self.servers,
+            })
+        }
+
+        for _ in 0..self.delete_clients {
+            model = model.actor(MyRegisterActor::DeleteClient {
+                delete_count: 2,
+                intermediate_gets: self.intermediate_gets,
                 server_count: self.servers,
             })
         }
@@ -461,15 +567,27 @@ impl ModelCfg {
                 "only have one value for each key",
                 |_, state| only_one_of_each_key(&state.actor_states),
             )
+            .property(
+                stateright::Expectation::Always,
+                "in sync when syncing is done and no in-flight requests",
+                |_, state| syncing_done_and_in_sync(state),
+            )
             .init_network(Network::new_ordered(vec![]))
     }
 }
 
 fn all_same_state(actors: &[Arc<MyRegisterActorState>]) -> bool {
     actors.windows(2).all(|w| match (&*w[0], &*w[1]) {
-        (MyRegisterActorState::Client { .. }, MyRegisterActorState::Client { .. }) => true,
-        (MyRegisterActorState::Client { .. }, MyRegisterActorState::Server(_)) => true,
-        (MyRegisterActorState::Server(_), MyRegisterActorState::Client { .. }) => true,
+        (MyRegisterActorState::PutClient { .. }, MyRegisterActorState::PutClient { .. }) => true,
+        (MyRegisterActorState::PutClient { .. }, MyRegisterActorState::DeleteClient { .. }) => true,
+        (MyRegisterActorState::PutClient { .. }, MyRegisterActorState::Server(_)) => true,
+        (MyRegisterActorState::DeleteClient { .. }, MyRegisterActorState::DeleteClient { .. }) => {
+            true
+        }
+        (MyRegisterActorState::DeleteClient { .. }, MyRegisterActorState::PutClient { .. }) => true,
+        (MyRegisterActorState::DeleteClient { .. }, MyRegisterActorState::Server(_)) => true,
+        (MyRegisterActorState::Server(_), MyRegisterActorState::PutClient { .. }) => true,
+        (MyRegisterActorState::Server(_), MyRegisterActorState::DeleteClient { .. }) => true,
         (MyRegisterActorState::Server(a), MyRegisterActorState::Server(b)) => a.values == b.values,
     })
 }
@@ -490,16 +608,45 @@ fn only_one_of_each_key(actors: &[Arc<MyRegisterActorState>]) -> bool {
     true
 }
 
+fn syncing_done_and_in_sync(state: &ActorModelState<MyRegisterActor>) -> bool {
+    // first check that the network has no sync messages in-flight.
+    for envelope in state.network.iter_deliverable() {
+        match envelope.msg {
+            MyRegisterMsg::Internal(PeerMsg::PutSync { .. }) => {
+                return true;
+            }
+            MyRegisterMsg::Internal(PeerMsg::DeleteSync { .. }) => {
+                return true;
+            }
+            MyRegisterMsg::Put(_, _)
+            | MyRegisterMsg::Get(_)
+            | MyRegisterMsg::Delete(_)
+            | MyRegisterMsg::PutOk(_)
+            | MyRegisterMsg::GetOk(_, _)
+            | MyRegisterMsg::DeleteOk(_) => {}
+        }
+    }
+
+    // next, check that all actors are in the same states (using sub-property checker)
+    all_same_state(&state.actor_states)
+}
+
 #[derive(Parser)]
 struct Opts {
     #[clap(subcommand)]
     command: SubCmd,
 
     #[clap(long, short, global = true, default_value = "2")]
-    clients: usize,
+    put_clients: usize,
+
+    #[clap(long, short, global = true, default_value = "2")]
+    delete_clients: usize,
 
     #[clap(long, short, global = true, default_value = "2")]
     servers: usize,
+
+    #[clap(long, global = true)]
+    intermediate_gets: bool,
 }
 
 #[derive(clap::Subcommand)]
@@ -512,8 +659,10 @@ fn main() {
     let opts = Opts::parse();
 
     let model = ModelCfg {
-        clients: opts.clients,
+        put_clients: opts.put_clients,
+        delete_clients: opts.delete_clients,
         servers: opts.servers,
+        intermediate_gets: opts.intermediate_gets,
     }
     .into_actor_model()
     .checker()
