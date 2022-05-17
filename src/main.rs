@@ -283,6 +283,7 @@ fn main() {
 
     match opts.command {
         SubCmd::Serve => {
+            println!("Serving web ui on http://127.0.0.1:8080");
             model.serve("127.0.0.1:8080");
         }
         SubCmd::Check => {
