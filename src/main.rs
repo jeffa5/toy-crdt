@@ -14,6 +14,8 @@ use std::hash::Hash;
 use std::sync::Arc;
 
 type Timestamp = (u32, usize);
+type RequestId = usize;
+type Value = char;
 
 #[derive(Clone, Debug, Hash, PartialEq, Eq)]
 struct Map {
@@ -217,9 +219,6 @@ enum MyRegisterActorState {
     },
     Server(<Peer as Actor>::State),
 }
-
-type RequestId = usize;
-type Value = char;
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
 enum MyRegisterMsg {
