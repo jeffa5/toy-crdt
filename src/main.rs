@@ -1,4 +1,6 @@
 use clap::Parser;
+use map::Map;
+use map::Timestamp;
 use stateright::actor::model_peers;
 use stateright::actor::Actor;
 use stateright::actor::ActorModel;
@@ -8,99 +10,15 @@ use stateright::actor::Out;
 use stateright::Checker;
 use stateright::{actor::Id, Model};
 use std::borrow::Cow;
-use std::collections::{BTreeSet, HashSet};
+use std::collections::HashSet;
 use std::fmt::Debug;
 use std::hash::Hash;
 use std::sync::Arc;
 
-type Timestamp = (u32, usize);
 type RequestId = usize;
 type Value = char;
 
-#[derive(Clone, Debug, Hash, PartialEq, Eq)]
-struct Map {
-    actor_id: Id,
-    max_op: u32,
-    values: BTreeSet<(Timestamp, char, char)>,
-}
-
-impl Map {
-    fn new(actor_id: Id) -> Self {
-        Self {
-            actor_id,
-            max_op: 0,
-            values: BTreeSet::new(),
-        }
-    }
-
-    fn get(&self, k: &char) -> Option<&char> {
-        self.values
-            .iter()
-            .find(|(_, kp, _)| k == kp)
-            .map(|(_, _, v)| v)
-    }
-
-    fn set(&mut self, key: char, v: char) -> Timestamp {
-        let t = self.new_timestamp();
-        // remove the old value from ourselves if there was one
-        if let Some(previous) = self.values.iter().find(|(_t, k, _v)| k == &key).cloned() {
-            self.values.remove(&previous);
-        }
-        // add it to ourselves
-        self.values.insert((t, key, v));
-        t
-    }
-
-    fn delete(&mut self, key: &char) -> Option<Timestamp> {
-        if let Some((t, k, v)) = self.values.iter().find(|(_, kp, _)| key == kp).cloned() {
-            // add it to ourselves
-            self.values.remove(&(t, k, v));
-            Some(t)
-        } else {
-            None
-        }
-    }
-
-    fn receive_set(&mut self, timestamp: Timestamp, key: char, value: char) {
-        self.update_max_op(timestamp);
-        let previous = self
-            .values
-            .iter()
-            .filter(|(_t, k, _v)| k == &key)
-            .cloned()
-            .collect::<HashSet<_>>();
-
-        if previous.is_empty() || previous.iter().all(|(t, _k, _v)| t < &timestamp) {
-            for p in previous {
-                self.values.remove(&p);
-            }
-            self.values.insert((timestamp, key, value));
-        }
-    }
-
-    fn receive_delete(&mut self, timestamp: Timestamp) {
-        self.update_max_op(timestamp);
-        if let Some(tuple) = self
-            .values
-            .iter()
-            .find(|(t, _k, _v)| t == &timestamp)
-            .cloned()
-        {
-            self.values.remove(&tuple);
-        }
-    }
-
-    fn update_max_op(&mut self, timestamp: Timestamp) {
-        self.max_op = std::cmp::max(self.max_op, timestamp.0);
-    }
-
-    // globally unique
-    fn new_timestamp(&mut self) -> Timestamp {
-        self.max_op += 1;
-        let id: usize = self.actor_id.into();
-        (self.max_op, id)
-    }
-}
+mod map;
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
 struct Peer {
