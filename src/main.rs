@@ -1,3 +1,4 @@
+use stateright::actor::model_peers;
 use stateright::actor::register::RegisterActor;
 use stateright::actor::register::RegisterActorState;
 use stateright::actor::register::RegisterMsg;
@@ -147,7 +148,7 @@ impl Actor for Peer {
             RegisterMsg::Put(id, value) => {
                 let key = 'b';
                 // apply the op locally
-                let timestamp = state.to_mut().set(key.clone(), value.clone());
+                let timestamp = state.to_mut().set(key, value);
 
                 o.broadcast(
                     &self.peers,
@@ -187,40 +188,55 @@ impl Actor for Peer {
     }
 }
 
+struct ModelCfg {
+    clients: u32,
+    servers: usize,
+}
+
+impl ModelCfg {
+    fn into_actor_model(self) -> ActorModel<RegisterActor<Peer>, (), ()> {
+        let mut model = ActorModel::new((), ());
+        for i in 0..self.servers {
+            model = model.actor(RegisterActor::Server(Peer {
+                peers: model_peers(i, self.servers),
+            }))
+        }
+
+        for _ in 0..self.clients {
+            model = model.actor(RegisterActor::Client {
+                put_count: 1,
+                server_count: self.servers,
+            })
+        }
+
+        model
+            .property(
+                stateright::Expectation::Eventually,
+                "all actors have the same value for all keys",
+                |_, state| all_same_state(&state.actor_states),
+            )
+            .property(
+                stateright::Expectation::Always,
+                "all actors have the same value for all keys",
+                |_, state| all_same_state(&state.actor_states),
+            )
+            .property(
+                stateright::Expectation::Always,
+                "only have one value for each key",
+                |_, state| only_one_of_each_key(&state.actor_states),
+            )
+            .init_network(Network::new_ordered(vec![]))
+    }
+}
+
 fn main() {
-    let checker = ActorModel::new((), ())
-        .actor(RegisterActor::Server(Peer {
-            peers: vec![Id::from(1)],
-        }))
-        .actor(RegisterActor::Server(Peer {
-            peers: vec![Id::from(0)],
-        }))
-        .actor(RegisterActor::Client {
-            put_count: 5,
-            server_count: 2,
-        })
-        .actor(RegisterActor::Client {
-            put_count: 5,
-            server_count: 2,
-        })
-        .property(
-            stateright::Expectation::Eventually,
-            "all actors have the same value for all keys",
-            |_, state| all_same_state(&state.actor_states),
-        )
-        .property(
-            stateright::Expectation::Always,
-            "all actors have the same value for all keys",
-            |_, state| all_same_state(&state.actor_states),
-        )
-        .property(
-            stateright::Expectation::Always,
-            "only have one value for each key",
-            |_, state| only_one_of_each_key(&state.actor_states),
-        )
-        .init_network(Network::new_ordered(vec![]))
-        .checker()
-        .serve("127.0.0.1:8080");
+    ModelCfg {
+        clients: 2,
+        servers: 2,
+    }
+    .into_actor_model()
+    .checker()
+    .serve("127.0.0.1:8080");
 }
 
 fn all_same_state(actors: &[Arc<RegisterActorState<TC, u64>>]) -> bool {
