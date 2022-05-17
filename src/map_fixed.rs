@@ -2,16 +2,48 @@ use std::collections::{BTreeSet, HashSet};
 
 use stateright::actor::Id;
 
-pub(crate) type Timestamp = (u32, usize);
+use crate::map::Map;
+
+use crate::map::Timestamp;
+
+impl Map for FixedMap {
+    fn new(actor_id: Id) -> Self {
+        Self::new(actor_id)
+    }
+
+    fn get(&self, k: &char) -> Option<&char> {
+        self.get(k)
+    }
+
+    fn set(&mut self, key: char, v: char) -> Timestamp {
+        self.set(key, v)
+    }
+
+    fn delete(&mut self, key: &char) -> Option<Timestamp> {
+        self.delete(key)
+    }
+
+    fn receive_set(&mut self, timestamp: Timestamp, key: char, value: char) {
+        self.receive_set(timestamp, key, value)
+    }
+
+    fn receive_delete(&mut self, timestamp: Timestamp) {
+        self.receive_delete(timestamp)
+    }
+
+    fn values(&self) -> Vec<(Timestamp, char, char)> {
+        self.values.iter().cloned().collect()
+    }
+}
 
 #[derive(Clone, Debug, Hash, PartialEq, Eq)]
-pub(crate) struct Map {
+pub(crate) struct FixedMap {
     actor_id: Id,
     max_op: u32,
     pub(crate) values: BTreeSet<(Timestamp, char, char)>,
 }
 
-impl Map {
+impl FixedMap {
     pub(crate) fn new(actor_id: Id) -> Self {
         Self {
             actor_id,
