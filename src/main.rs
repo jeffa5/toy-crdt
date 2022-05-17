@@ -279,7 +279,8 @@ fn main() {
         servers: opts.servers,
     }
     .into_actor_model()
-    .checker();
+    .checker()
+    .threads(num_cpus::get());
 
     match opts.command {
         SubCmd::Serve => {
@@ -287,7 +288,11 @@ fn main() {
             model.serve("127.0.0.1:8080");
         }
         SubCmd::Check => {
-            model.spawn_dfs().join().assert_properties();
+            model
+                .spawn_dfs()
+                .report(&mut std::io::stdout())
+                .join()
+                .assert_properties();
         }
     }
 }
