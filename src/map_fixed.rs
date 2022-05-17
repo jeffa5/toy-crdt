@@ -15,20 +15,26 @@ impl Map for FixedMap {
         self.get(k)
     }
 
-    fn set(&mut self, key: char, v: char) -> Timestamp {
+    fn set(&mut self, key: char, v: char) -> (Vec<Timestamp>, Timestamp) {
         self.set(key, v)
     }
 
-    fn delete(&mut self, key: &char) -> Option<Timestamp> {
+    fn delete(&mut self, key: &char) -> Option<Vec<Timestamp>> {
         self.delete(key)
     }
 
-    fn receive_set(&mut self, timestamp: Timestamp, key: char, value: char) {
-        self.receive_set(timestamp, key, value)
+    fn receive_set(
+        &mut self,
+        context: Vec<Timestamp>,
+        timestamp: Timestamp,
+        key: char,
+        value: char,
+    ) {
+        self.receive_set(context, timestamp, key, value)
     }
 
-    fn receive_delete(&mut self, timestamp: Timestamp) {
-        self.receive_delete(timestamp)
+    fn receive_delete(&mut self, context: Vec<Timestamp>) {
+        self.receive_delete(context)
     }
 
     fn values(&self) -> Vec<(Timestamp, char, char)> {
@@ -52,61 +58,77 @@ impl FixedMap {
         }
     }
 
-    pub(crate) fn get(&self, k: &char) -> Option<&char> {
-        self.values
+    pub(crate) fn get(&self, key: &char) -> Option<&char> {
+        let big_t = self
+            .values
             .iter()
-            .find(|(_, kp, _)| k == kp)
-            .map(|(_, _, v)| v)
-    }
+            .filter_map(|(t, k, _)| if k == key { Some(t) } else { None })
+            .collect::<Vec<_>>();
 
-    pub(crate) fn set(&mut self, key: char, v: char) -> Timestamp {
-        let t = self.new_timestamp();
-        // remove the old value from ourselves if there was one
-        if let Some(previous) = self.values.iter().find(|(_t, k, _v)| k == &key).cloned() {
-            self.values.remove(&previous);
-        }
-        // add it to ourselves
-        self.values.insert((t, key, v));
-        t
-    }
-
-    pub(crate) fn delete(&mut self, key: &char) -> Option<Timestamp> {
-        if let Some((t, k, v)) = self.values.iter().find(|(_, kp, _)| key == kp).cloned() {
-            // add it to ourselves
-            self.values.remove(&(t, k, v));
-            Some(t)
-        } else {
+        if big_t.is_empty() {
             None
+        } else {
+            let max_t = big_t.iter().max().unwrap();
+            self.values
+                .iter()
+                .find(|(t, kp, _)| key == kp && &t == max_t)
+                .map(|(_, _, v)| v)
         }
     }
 
-    pub(crate) fn receive_set(&mut self, timestamp: Timestamp, key: char, value: char) {
-        self.update_max_op(timestamp);
-        let previous = self
+    pub(crate) fn set(&mut self, key: char, value: char) -> (Vec<Timestamp>, Timestamp) {
+        let big_t = self
             .values
             .iter()
-            .filter(|(_t, k, _v)| k == &key)
+            .filter_map(|(t, k, _)| if k == &key { Some(t) } else { None })
             .cloned()
-            .collect::<HashSet<_>>();
+            .collect::<Vec<_>>();
 
-        if previous.is_empty() || previous.iter().all(|(t, _k, _v)| t < &timestamp) {
-            for p in previous {
-                self.values.remove(&p);
-            }
-            self.values.insert((timestamp, key, value));
-        }
+        let t = self.new_timestamp();
+
+        // retain all values that aren't in the context
+        self.values.retain(|(t, _k, _v)| !big_t.contains(t));
+        // then insert the new one
+        self.values.insert((t, key, value));
+
+        (big_t, t)
     }
 
-    pub(crate) fn receive_delete(&mut self, timestamp: Timestamp) {
-        self.update_max_op(timestamp);
-        if let Some(tuple) = self
+    pub(crate) fn delete(&mut self, key: &char) -> Option<Vec<Timestamp>> {
+        let big_t = self
             .values
             .iter()
-            .find(|(t, _k, _v)| t == &timestamp)
+            .filter_map(|(t, k, _)| if k == key { Some(t) } else { None })
             .cloned()
-        {
-            self.values.remove(&tuple);
+            .collect::<Vec<_>>();
+
+        // retain all values that aren't in the context
+        self.values.retain(|(t, _k, _v)| !big_t.contains(t));
+        Some(big_t)
+    }
+
+    pub(crate) fn receive_set(
+        &mut self,
+        context: Vec<Timestamp>,
+        timestamp: Timestamp,
+        key: char,
+        value: char,
+    ) {
+        self.update_max_op(timestamp);
+
+        // retain all values that aren't in the context
+        self.values.retain(|(t, _k, _v)| !context.contains(t));
+        // then insert the new one
+        self.values.insert((timestamp, key, value));
+    }
+
+    pub(crate) fn receive_delete(&mut self, context: Vec<Timestamp>) {
+        if let Some(t) = context.iter().max() {
+            self.update_max_op(*t)
         }
+
+        // retain all values that aren't in the context
+        self.values.retain(|(t, _k, _v)| !context.contains(t));
     }
 
     fn update_max_op(&mut self, timestamp: Timestamp) {

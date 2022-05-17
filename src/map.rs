@@ -7,13 +7,19 @@ pub(crate) trait Map {
 
     fn get(&self, k: &char) -> Option<&char>;
 
-    fn set(&mut self, key: char, v: char) -> Timestamp;
+    fn set(&mut self, key: char, v: char) -> (Vec<Timestamp>, Timestamp);
 
-    fn delete(&mut self, key: &char) -> Option<Timestamp>;
+    fn delete(&mut self, key: &char) -> Option<Vec<Timestamp>>;
 
-    fn receive_set(&mut self, timestamp: Timestamp, key: char, value: char);
+    fn receive_set(
+        &mut self,
+        context: Vec<Timestamp>,
+        timestamp: Timestamp,
+        key: char,
+        value: char,
+    );
 
-    fn receive_delete(&mut self, timestamp: Timestamp);
+    fn receive_delete(&mut self, context: Vec<Timestamp>);
 
     fn values(&self) -> Vec<(Timestamp, char, char)>;
 }

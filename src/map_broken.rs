@@ -14,20 +14,26 @@ impl Map for BrokenMap {
         self.get(k)
     }
 
-    fn set(&mut self, key: char, v: char) -> Timestamp {
+    fn set(&mut self, key: char, v: char) -> (Vec<Timestamp>, Timestamp) {
         self.set(key, v)
     }
 
-    fn delete(&mut self, key: &char) -> Option<Timestamp> {
+    fn delete(&mut self, key: &char) -> Option<Vec<Timestamp>> {
         self.delete(key)
     }
 
-    fn receive_set(&mut self, timestamp: Timestamp, key: char, value: char) {
-        self.receive_set(timestamp, key, value)
+    fn receive_set(
+        &mut self,
+        context: Vec<Timestamp>,
+        timestamp: Timestamp,
+        key: char,
+        value: char,
+    ) {
+        self.receive_set(context, timestamp, key, value)
     }
 
-    fn receive_delete(&mut self, timestamp: Timestamp) {
-        self.receive_delete(timestamp)
+    fn receive_delete(&mut self, context: Vec<Timestamp>) {
+        self.receive_delete(context)
     }
 
     fn values(&self) -> Vec<(Timestamp, char, char)> {
@@ -58,7 +64,7 @@ impl BrokenMap {
             .map(|(_, _, v)| v)
     }
 
-    pub(crate) fn set(&mut self, key: char, v: char) -> Timestamp {
+    pub(crate) fn set(&mut self, key: char, v: char) -> (Vec<Timestamp>, Timestamp) {
         let t = self.new_timestamp();
         // remove the old value from ourselves if there was one
         if let Some(previous) = self.values.iter().find(|(_t, k, _v)| k == &key).cloned() {
@@ -66,20 +72,26 @@ impl BrokenMap {
         }
         // add it to ourselves
         self.values.insert((t, key, v));
-        t
+        (vec![], t)
     }
 
-    pub(crate) fn delete(&mut self, key: &char) -> Option<Timestamp> {
+    pub(crate) fn delete(&mut self, key: &char) -> Option<Vec<Timestamp>> {
         if let Some((t, k, v)) = self.values.iter().find(|(_, kp, _)| key == kp).cloned() {
             // add it to ourselves
             self.values.remove(&(t, k, v));
-            Some(t)
+            Some(vec![t])
         } else {
             None
         }
     }
 
-    pub(crate) fn receive_set(&mut self, timestamp: Timestamp, key: char, value: char) {
+    pub(crate) fn receive_set(
+        &mut self,
+        _context: Vec<Timestamp>,
+        timestamp: Timestamp,
+        key: char,
+        value: char,
+    ) {
         self.update_max_op(timestamp);
         let previous = self
             .values
@@ -96,12 +108,12 @@ impl BrokenMap {
         }
     }
 
-    pub(crate) fn receive_delete(&mut self, timestamp: Timestamp) {
-        self.update_max_op(timestamp);
+    pub(crate) fn receive_delete(&mut self, timestamp: Vec<Timestamp>) {
+        self.update_max_op(timestamp[0]);
         if let Some(tuple) = self
             .values
             .iter()
-            .find(|(t, _k, _v)| t == &timestamp)
+            .find(|(t, _k, _v)| t == &timestamp[0])
             .cloned()
         {
             self.values.remove(&tuple);

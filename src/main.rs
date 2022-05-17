@@ -38,12 +38,13 @@ struct Peer<M> {
 #[derive(Clone, Debug, Hash, PartialEq, Eq)]
 enum PeerMsg {
     PutSync {
+        context: Vec<Timestamp>,
         timestamp: Timestamp,
         key: char,
         value: char,
     },
     DeleteSync {
-        timestamp: Timestamp,
+        context: Vec<Timestamp>,
     },
 }
 
@@ -70,7 +71,7 @@ where
         match msg {
             MyRegisterMsg::Put(id, key, value) => {
                 // apply the op locally
-                let timestamp = state.to_mut().set(key, value);
+                let (context, timestamp) = state.to_mut().set(key, value);
 
                 // respond to the query (not totally necessary for this)
                 o.send(src, MyRegisterMsg::PutOk(id));
@@ -78,6 +79,7 @@ where
                 o.broadcast(
                     &self.peers,
                     &MyRegisterMsg::Internal(PeerMsg::PutSync {
+                        context,
                         timestamp,
                         key,
                         value,
@@ -97,20 +99,21 @@ where
                 // respond to the query (not totally necessary for this)
                 o.send(src, MyRegisterMsg::DeleteOk(id));
 
-                if let Some(timestamp) = timestamp {
+                if let Some(context) = timestamp {
                     o.broadcast(
                         &self.peers,
-                        &MyRegisterMsg::Internal(PeerMsg::DeleteSync { timestamp }),
+                        &MyRegisterMsg::Internal(PeerMsg::DeleteSync { context }),
                     )
                 }
             }
             MyRegisterMsg::Internal(PeerMsg::PutSync {
+                context,
                 timestamp,
                 key,
                 value,
-            }) => state.to_mut().receive_set(timestamp, key, value),
-            MyRegisterMsg::Internal(PeerMsg::DeleteSync { timestamp }) => {
-                state.to_mut().receive_delete(timestamp)
+            }) => state.to_mut().receive_set(context, timestamp, key, value),
+            MyRegisterMsg::Internal(PeerMsg::DeleteSync { context }) => {
+                state.to_mut().receive_delete(context)
             }
             MyRegisterMsg::PutOk(_id) => {}
             MyRegisterMsg::GetOk(_id, _value) => {}
