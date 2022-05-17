@@ -600,7 +600,7 @@ struct Opts {
     intermediate_gets: bool,
 
     /// Use the broken map.
-    #[clap(long)]
+    #[clap(long, global = true)]
     broken: bool,
 }
 

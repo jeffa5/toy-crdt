@@ -4,6 +4,8 @@ Based off of the first (broken) version of [Martin's tweet](https://twitter.com/
 
 ## Running
 
+Add the `--broken` flag to any run to run it with the non-working version. The fixed version runs by default.
+
 ### Web viewer
 
 ```sh
