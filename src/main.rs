@@ -1,6 +1,7 @@
 use clap::Parser;
 use map::Map;
 use map::Timestamp;
+use map_broken::BrokenMap;
 use stateright::actor::model_peers;
 use stateright::actor::Actor;
 use stateright::actor::ActorModel;
@@ -13,6 +14,7 @@ use std::borrow::Cow;
 use std::collections::HashSet;
 use std::fmt::Debug;
 use std::hash::Hash;
+use std::marker::PhantomData;
 use std::sync::Arc;
 
 const KEY: char = 'k';
@@ -22,10 +24,13 @@ type Key = char;
 type Value = char;
 
 mod map;
+mod map_broken;
+mod map_fixed;
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
-struct Peer {
+struct Peer<M> {
     peers: Vec<Id>,
+    _t: PhantomData<M>,
 }
 
 #[derive(Clone, Debug, Hash, PartialEq, Eq)]
@@ -40,10 +45,13 @@ enum PeerMsg {
     },
 }
 
-impl Actor for Peer {
+impl<M> Actor for Peer<M>
+where
+    M: Clone + Debug + PartialEq + Hash + Map,
+{
     type Msg = MyRegisterMsg;
 
-    type State = Map;
+    type State = M;
 
     fn on_start(&self, id: Id, _o: &mut Out<Self>) -> Self::State {
         Self::State::new(id)
@@ -110,7 +118,7 @@ impl Actor for Peer {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-enum MyRegisterActor {
+enum MyRegisterActor<M> {
     PutClient {
         put_count: usize,
         /// Whether to send a get request after each mutation
@@ -123,11 +131,14 @@ enum MyRegisterActor {
         intermediate_gets: bool,
         server_count: usize,
     },
-    Server(Peer),
+    Server(Peer<M>),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
-enum MyRegisterActorState {
+enum MyRegisterActorState<M>
+where
+    M: Clone + Debug + PartialEq + Hash + Map,
+{
     PutClient {
         awaiting: Option<RequestId>,
         op_count: usize,
@@ -136,7 +147,7 @@ enum MyRegisterActorState {
         awaiting: Option<RequestId>,
         op_count: usize,
     },
-    Server(<Peer as Actor>::State),
+    Server(<Peer<M> as Actor>::State),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
@@ -159,10 +170,13 @@ enum MyRegisterMsg {
     DeleteOk(RequestId),
 }
 
-impl Actor for MyRegisterActor {
+impl<M> Actor for MyRegisterActor<M>
+where
+    M: Clone + Debug + PartialEq + Hash + Map,
+{
     type Msg = MyRegisterMsg;
 
-    type State = MyRegisterActorState;
+    type State = MyRegisterActorState<M>;
 
     fn on_start(&self, id: Id, o: &mut Out<Self>) -> Self::State {
         match self {
@@ -453,11 +467,14 @@ struct ModelCfg {
 }
 
 impl ModelCfg {
-    fn into_actor_model(self) -> ActorModel<MyRegisterActor, (), ()> {
+    fn into_actor_model<M: Clone + Debug + PartialEq + Hash + Map>(
+        self,
+    ) -> ActorModel<MyRegisterActor<M>, (), ()> {
         let mut model = ActorModel::new((), ());
         for i in 0..self.servers {
             model = model.actor(MyRegisterActor::Server(Peer {
                 peers: model_peers(i, self.servers),
+                _t: PhantomData::default(),
             }))
         }
 
@@ -497,7 +514,9 @@ impl ModelCfg {
     }
 }
 
-fn all_same_state(actors: &[Arc<MyRegisterActorState>]) -> bool {
+fn all_same_state<M: Clone + Debug + PartialEq + Hash + Map>(
+    actors: &[Arc<MyRegisterActorState<M>>],
+) -> bool {
     actors.windows(2).all(|w| match (&*w[0], &*w[1]) {
         (MyRegisterActorState::PutClient { .. }, MyRegisterActorState::PutClient { .. }) => true,
         (MyRegisterActorState::PutClient { .. }, MyRegisterActorState::DeleteClient { .. }) => true,
@@ -509,19 +528,23 @@ fn all_same_state(actors: &[Arc<MyRegisterActorState>]) -> bool {
         (MyRegisterActorState::DeleteClient { .. }, MyRegisterActorState::Server(_)) => true,
         (MyRegisterActorState::Server(_), MyRegisterActorState::PutClient { .. }) => true,
         (MyRegisterActorState::Server(_), MyRegisterActorState::DeleteClient { .. }) => true,
-        (MyRegisterActorState::Server(a), MyRegisterActorState::Server(b)) => a.values == b.values,
+        (MyRegisterActorState::Server(a), MyRegisterActorState::Server(b)) => {
+            a.values() == b.values()
+        }
     })
 }
 
-fn only_one_of_each_key(actors: &[Arc<MyRegisterActorState>]) -> bool {
+fn only_one_of_each_key<M: Clone + Debug + PartialEq + Hash + Map>(
+    actors: &[Arc<MyRegisterActorState<M>>],
+) -> bool {
     for actor in actors {
         if let MyRegisterActorState::Server(actor) = &**actor {
             let keys = actor
-                .values
-                .iter()
+                .values()
+                .into_iter()
                 .map(|(_, k, _)| k)
                 .collect::<HashSet<_>>();
-            if keys.len() != actor.values.len() {
+            if keys.len() != actor.values().len() {
                 return false;
             }
         }
@@ -529,7 +552,9 @@ fn only_one_of_each_key(actors: &[Arc<MyRegisterActorState>]) -> bool {
     true
 }
 
-fn syncing_done_and_in_sync(state: &ActorModelState<MyRegisterActor>) -> bool {
+fn syncing_done_and_in_sync<M: Clone + Debug + PartialEq + Hash + Map>(
+    state: &ActorModelState<MyRegisterActor<M>>,
+) -> bool {
     // first check that the network has no sync messages in-flight.
     for envelope in state.network.iter_deliverable() {
         match envelope.msg {
@@ -586,7 +611,7 @@ fn main() {
         servers: opts.servers,
         intermediate_gets: opts.intermediate_gets,
     }
-    .into_actor_model()
+    .into_actor_model::<BrokenMap>()
     .checker()
     .threads(num_cpus::get());
 
