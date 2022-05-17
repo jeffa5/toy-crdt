@@ -140,6 +140,7 @@ impl Actor for Peer {
                 // apply the op locally
                 let timestamp = state.to_mut().set(key, value);
 
+                // respond to the query (not totally necessary for this)
                 o.send(src, MyRegisterMsg::PutOk(id));
 
                 o.broadcast(
@@ -153,6 +154,7 @@ impl Actor for Peer {
             }
             MyRegisterMsg::Get(id) => {
                 if let Some(value) = state.get(&'b') {
+                    // respond to the query (not totally necessary for this)
                     o.send(src, MyRegisterMsg::GetOk(id, *value))
                 }
             }
@@ -161,6 +163,7 @@ impl Actor for Peer {
                 // apply the op locally
                 let timestamp = state.to_mut().delete(&key);
 
+                // respond to the query (not totally necessary for this)
                 o.send(src, MyRegisterMsg::DeleteOk(id));
 
                 if let Some(timestamp) = timestamp {
