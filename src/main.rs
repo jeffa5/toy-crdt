@@ -13,7 +13,6 @@ use stateright::Checker;
 use stateright::CheckerBuilder;
 use stateright::{actor::Id, Model};
 use std::borrow::Cow;
-use std::collections::HashSet;
 use std::fmt::Debug;
 use std::hash::Hash;
 use std::marker::PhantomData;
