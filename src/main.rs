@@ -1,14 +1,12 @@
 use clap::Parser;
 use stateright::actor::model_peers;
-use stateright::actor::register::RegisterActor;
-use stateright::actor::register::RegisterActorState;
-use stateright::actor::register::RegisterMsg;
 use stateright::actor::Actor;
 use stateright::actor::ActorModel;
 use stateright::actor::Network;
 use stateright::actor::Out;
 use stateright::Checker;
 use stateright::{actor::Id, Model};
+use std::borrow::Cow;
 use std::collections::{BTreeSet, HashSet};
 use std::fmt::Debug;
 use std::hash::Hash;
@@ -101,6 +99,7 @@ impl Map {
     }
 }
 
+#[derive(Clone, Debug, Eq, PartialEq, Hash)]
 struct Peer {
     peers: Vec<Id>,
 }
@@ -118,7 +117,7 @@ enum PeerMsg {
 }
 
 impl Actor for Peer {
-    type Msg = RegisterMsg<u64, char, PeerMsg>;
+    type Msg = MyRegisterMsg;
 
     type State = Map;
 
@@ -135,47 +134,296 @@ impl Actor for Peer {
         o: &mut Out<Self>,
     ) {
         match msg {
-            RegisterMsg::Put(id, value) => {
+            MyRegisterMsg::Put(id, value) => {
                 let key = 'b';
                 // apply the op locally
                 let timestamp = state.to_mut().set(key, value);
 
-                o.send(src, RegisterMsg::PutOk(id));
+                o.send(src, MyRegisterMsg::PutOk(id));
 
                 o.broadcast(
                     &self.peers,
-                    &RegisterMsg::Internal(PeerMsg::PutSync {
+                    &MyRegisterMsg::Internal(PeerMsg::PutSync {
                         timestamp,
                         key,
                         value,
                     }),
                 )
             }
-            RegisterMsg::Get(id) => {
-
-                if let Some(value) =
-            state.get(&'b') {
-                o.send(src, RegisterMsg::GetOk(id, *value))
+            MyRegisterMsg::Get(id) => {
+                if let Some(value) = state.get(&'b') {
+                    o.send(src, MyRegisterMsg::GetOk(id, *value))
                 }
-
             }
-            ,
-            // RegisterMsg::Delete { key } => {
-            //     // apply the op locally
-            //     let timestamp = state.to_mut().delete(&key);
+            MyRegisterMsg::Delete(id) => {
+                let key = 'b';
+                // apply the op locally
+                let timestamp = state.to_mut().delete(&key);
 
-            //     if let Some(timestamp) = timestamp {
-            //         o.broadcast(&self.peers, &RegisterMsg::DeleteSync { timestamp })
-            //     }
-            // }
-            RegisterMsg::Internal(PeerMsg::PutSync {
+                o.send(src, MyRegisterMsg::DeleteOk(id));
+
+                if let Some(timestamp) = timestamp {
+                    o.broadcast(
+                        &self.peers,
+                        &MyRegisterMsg::Internal(PeerMsg::DeleteSync { timestamp }),
+                    )
+                }
+            }
+            MyRegisterMsg::Internal(PeerMsg::PutSync {
                 timestamp,
                 key,
                 value,
             }) => state.to_mut().receive_set(timestamp, key, value),
-            RegisterMsg::Internal(PeerMsg::DeleteSync { timestamp }) => state.to_mut().receive_delete(timestamp),
-            RegisterMsg::PutOk(_id) => {}
-            RegisterMsg::GetOk(_id, _value) => {}
+            MyRegisterMsg::Internal(PeerMsg::DeleteSync { timestamp }) => {
+                state.to_mut().receive_delete(timestamp)
+            }
+            MyRegisterMsg::PutOk(_id) => {}
+            MyRegisterMsg::GetOk(_id, _value) => {}
+            MyRegisterMsg::DeleteOk(_id) => {}
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum MyRegisterActor {
+    Client {
+        put_count: usize,
+        delete_count: usize,
+        server_count: usize,
+    },
+    Server(Peer),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Hash)]
+enum MyRegisterActorState {
+    Client {
+        awaiting: Option<RequestId>,
+        op_count: usize,
+    },
+    Server(<Peer as Actor>::State),
+}
+
+type RequestId = usize;
+type Value = char;
+
+#[derive(Clone, Debug, Eq, PartialEq, Hash)]
+enum MyRegisterMsg {
+    /// A message specific to the register system's internal protocol.
+    Internal(PeerMsg),
+
+    /// Indicates that a value should be written.
+    Put(RequestId, Value),
+    /// Indicates that a value should be retrieved.
+    Get(RequestId),
+    /// Indicates that a value should be deleted.
+    Delete(RequestId),
+
+    /// Indicates a successful `Put`. Analogous to an HTTP 2XX.
+    PutOk(RequestId),
+    /// Indicates a successful `Get`. Analogous to an HTTP 2XX.
+    GetOk(RequestId, Value),
+    /// Indicates a successful `Delete`. Analogous to an HTTP 2XX.
+    DeleteOk(RequestId),
+}
+
+impl Actor for MyRegisterActor {
+    type Msg = MyRegisterMsg;
+
+    type State = MyRegisterActorState;
+
+    fn on_start(&self, id: Id, o: &mut Out<Self>) -> Self::State {
+        match self {
+            MyRegisterActor::Client {
+                put_count,
+                delete_count,
+                server_count,
+            } => {
+                let server_count = *server_count;
+
+                let index: usize = id.into();
+                if index < server_count {
+                    panic!("MyRegisterActor clients must be added to the model after servers.");
+                }
+
+                if *put_count > 0 {
+                    let unique_request_id = 1 * index; // next will be 2 * index
+                    let value = (b'A' + (index - server_count) as u8) as char;
+                    o.send(
+                        Id::from((index + 0) % server_count),
+                        MyRegisterMsg::Put(unique_request_id, value),
+                    );
+                    MyRegisterActorState::Client {
+                        awaiting: Some(unique_request_id),
+                        op_count: 1,
+                    }
+                } else if *delete_count > 0 {
+                    let unique_request_id = 1 * index; // next will be 2 * index
+                    o.send(
+                        Id::from((index + 0) % server_count),
+                        MyRegisterMsg::Delete(unique_request_id),
+                    );
+                    MyRegisterActorState::Client {
+                        awaiting: Some(unique_request_id),
+                        op_count: 1,
+                    }
+                } else {
+                    MyRegisterActorState::Client {
+                        awaiting: None,
+                        op_count: 0,
+                    }
+                }
+            }
+            MyRegisterActor::Server(server_actor) => {
+                let mut server_out = Out::new();
+                let state =
+                    MyRegisterActorState::Server(server_actor.on_start(id, &mut server_out));
+                o.append(&mut server_out);
+                state
+            }
+        }
+    }
+
+    fn on_msg(
+        &self,
+        id: Id,
+        state: &mut Cow<Self::State>,
+        src: Id,
+        msg: Self::Msg,
+        o: &mut Out<Self>,
+    ) {
+        use MyRegisterActor as A;
+        use MyRegisterActorState as S;
+
+        match (self, &**state) {
+            (
+                A::Client {
+                    put_count,
+                    delete_count,
+                    server_count,
+                },
+                S::Client {
+                    awaiting: Some(awaiting),
+                    op_count,
+                },
+            ) => {
+                let server_count = *server_count;
+                match msg {
+                    MyRegisterMsg::PutOk(request_id) if &request_id == awaiting => {
+                        let index: usize = id.into();
+                        let unique_request_id = (op_count + 1) * index;
+                        if *op_count < *put_count {
+                            let value = (b'Z' - (index - server_count) as u8) as char;
+                            o.send(
+                                Id::from((index + op_count) % server_count),
+                                MyRegisterMsg::Put(unique_request_id, value),
+                            );
+                        } else {
+                            o.send(
+                                Id::from((index + op_count) % server_count),
+                                MyRegisterMsg::Get(unique_request_id),
+                            );
+                        }
+                        *state = Cow::Owned(MyRegisterActorState::Client {
+                            awaiting: Some(unique_request_id),
+                            op_count: op_count + 1,
+                        });
+                    }
+                    MyRegisterMsg::GetOk(request_id, _value) if &request_id == awaiting => {
+                        // done with puts but we may still want to run some deletes
+                        if *delete_count > 0 {
+                            let index: usize = id.into();
+                            let unique_request_id = (op_count + 1) * index;
+                            if *op_count < *delete_count {
+                                o.send(
+                                    Id::from((index + op_count) % server_count),
+                                    MyRegisterMsg::Delete(unique_request_id),
+                                );
+                            } else {
+                                o.send(
+                                    Id::from((index + op_count) % server_count),
+                                    MyRegisterMsg::Get(unique_request_id),
+                                );
+                            }
+                            *state = Cow::Owned(MyRegisterActorState::Client {
+                                awaiting: Some(unique_request_id),
+                                op_count: op_count + 1,
+                            });
+                        } else {
+                            *state = Cow::Owned(MyRegisterActorState::Client {
+                                awaiting: None,
+                                op_count: op_count + 1,
+                            });
+                        }
+                    }
+                    MyRegisterMsg::DeleteOk(request_id) if &request_id == awaiting => {
+                        let index: usize = id.into();
+                        let unique_request_id = (op_count + 1) * index;
+                        if *op_count < *delete_count {
+                            o.send(
+                                Id::from((index + op_count) % server_count),
+                                MyRegisterMsg::Delete(unique_request_id),
+                            );
+                        } else {
+                            o.send(
+                                Id::from((index + op_count) % server_count),
+                                MyRegisterMsg::Get(unique_request_id),
+                            );
+                        }
+                        *state = Cow::Owned(MyRegisterActorState::Client {
+                            awaiting: Some(unique_request_id),
+                            op_count: op_count + 1,
+                        });
+                    }
+                    MyRegisterMsg::PutOk(_) => {}
+                    MyRegisterMsg::GetOk(_, _) => {}
+                    MyRegisterMsg::DeleteOk(_) => {}
+                    MyRegisterMsg::Put(_, _) => {}
+                    MyRegisterMsg::Get(_) => {}
+                    MyRegisterMsg::Delete(_) => {}
+                    MyRegisterMsg::Internal(_) => {}
+                }
+            }
+            (A::Server(server_actor), S::Server(server_state)) => {
+                let mut server_state = Cow::Borrowed(server_state);
+                let mut server_out = Out::new();
+                server_actor.on_msg(id, &mut server_state, src, msg, &mut server_out);
+                if let Cow::Owned(server_state) = server_state {
+                    *state = Cow::Owned(MyRegisterActorState::Server(server_state))
+                }
+                o.append(&mut server_out);
+            }
+            (A::Server(_), S::Client { .. }) => {}
+            (A::Client { .. }, S::Server(_)) => {}
+            (
+                A::Client {
+                    put_count: _,
+                    delete_count: _,
+                    server_count: _,
+                },
+                S::Client {
+                    awaiting: None,
+                    op_count: _,
+                },
+            ) => {}
+        }
+    }
+
+    fn on_timeout(&self, id: Id, state: &mut Cow<Self::State>, o: &mut Out<Self>) {
+        use MyRegisterActor as A;
+        use MyRegisterActorState as S;
+        match (self, &**state) {
+            (A::Client { .. }, S::Client { .. }) => {}
+            (A::Server(server_actor), S::Server(server_state)) => {
+                let mut server_state = Cow::Borrowed(server_state);
+                let mut server_out = Out::new();
+                server_actor.on_timeout(id, &mut server_state, &mut server_out);
+                if let Cow::Owned(server_state) = server_state {
+                    *state = Cow::Owned(MyRegisterActorState::Server(server_state))
+                }
+                o.append(&mut server_out);
+            }
+            (A::Server(_), S::Client { .. }) => {}
+            (A::Client { .. }, S::Server(_)) => {}
         }
     }
 }
@@ -186,17 +434,18 @@ struct ModelCfg {
 }
 
 impl ModelCfg {
-    fn into_actor_model(self) -> ActorModel<RegisterActor<Peer>, (), ()> {
+    fn into_actor_model(self) -> ActorModel<MyRegisterActor, (), ()> {
         let mut model = ActorModel::new((), ());
         for i in 0..self.servers {
-            model = model.actor(RegisterActor::Server(Peer {
+            model = model.actor(MyRegisterActor::Server(Peer {
                 peers: model_peers(i, self.servers),
             }))
         }
 
         for _ in 0..self.clients {
-            model = model.actor(RegisterActor::Client {
+            model = model.actor(MyRegisterActor::Client {
                 put_count: 1,
+                delete_count: 1,
                 server_count: self.servers,
             })
         }
@@ -216,18 +465,18 @@ impl ModelCfg {
     }
 }
 
-fn all_same_state(actors: &[Arc<RegisterActorState<Map, u64>>]) -> bool {
+fn all_same_state(actors: &[Arc<MyRegisterActorState>]) -> bool {
     actors.windows(2).all(|w| match (&*w[0], &*w[1]) {
-        (RegisterActorState::Client { .. }, RegisterActorState::Client { .. }) => true,
-        (RegisterActorState::Client { .. }, RegisterActorState::Server(_)) => true,
-        (RegisterActorState::Server(_), RegisterActorState::Client { .. }) => true,
-        (RegisterActorState::Server(a), RegisterActorState::Server(b)) => a.values == b.values,
+        (MyRegisterActorState::Client { .. }, MyRegisterActorState::Client { .. }) => true,
+        (MyRegisterActorState::Client { .. }, MyRegisterActorState::Server(_)) => true,
+        (MyRegisterActorState::Server(_), MyRegisterActorState::Client { .. }) => true,
+        (MyRegisterActorState::Server(a), MyRegisterActorState::Server(b)) => a.values == b.values,
     })
 }
 
-fn only_one_of_each_key(actors: &[Arc<RegisterActorState<Map, u64>>]) -> bool {
+fn only_one_of_each_key(actors: &[Arc<MyRegisterActorState>]) -> bool {
     for actor in actors {
-        if let RegisterActorState::Server(actor) = &**actor {
+        if let MyRegisterActorState::Server(actor) = &**actor {
             let keys = actor
                 .values
                 .iter()
