@@ -573,7 +573,8 @@ struct Opts {
 #[derive(clap::Subcommand)]
 enum SubCmd {
     Serve,
-    Check,
+    CheckDfs,
+    CheckBfs,
 }
 
 fn main() {
@@ -594,9 +595,16 @@ fn main() {
             println!("Serving web ui on http://127.0.0.1:8080");
             model.serve("127.0.0.1:8080");
         }
-        SubCmd::Check => {
+        SubCmd::CheckDfs => {
             model
                 .spawn_dfs()
+                .report(&mut std::io::stdout())
+                .join()
+                .assert_properties();
+        }
+        SubCmd::CheckBfs => {
+            model
+                .spawn_bfs()
                 .report(&mut std::io::stdout())
                 .join()
                 .assert_properties();
