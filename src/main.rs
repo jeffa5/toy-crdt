@@ -540,23 +540,23 @@ fn all_same_state<M: Clone + Debug + PartialEq + Hash + Map>(
     })
 }
 
-fn only_one_of_each_key<M: Clone + Debug + PartialEq + Hash + Map>(
-    actors: &[Arc<MyRegisterActorState<M>>],
-) -> bool {
-    for actor in actors {
-        if let MyRegisterActorState::Server(actor) = &**actor {
-            let keys = actor
-                .values()
-                .into_iter()
-                .map(|(_, k, _)| k)
-                .collect::<HashSet<_>>();
-            if keys.len() != actor.values().len() {
-                return false;
-            }
-        }
-    }
-    true
-}
+// fn only_one_of_each_key<M: Clone + Debug + PartialEq + Hash + Map>(
+//     actors: &[Arc<MyRegisterActorState<M>>],
+// ) -> bool {
+//     for actor in actors {
+//         if let MyRegisterActorState::Server(actor) = &**actor {
+//             let keys = actor
+//                 .values()
+//                 .into_iter()
+//                 .map(|(_, k, _)| k)
+//                 .collect::<HashSet<_>>();
+//             if keys.len() != actor.values().len() {
+//                 return false;
+//             }
+//         }
+//     }
+//     true
+// }
 
 fn syncing_done_and_in_sync<M: Clone + Debug + PartialEq + Hash + Map>(
     state: &ActorModelState<MyRegisterActor<M>>,
