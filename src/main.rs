@@ -15,7 +15,10 @@ use std::fmt::Debug;
 use std::hash::Hash;
 use std::sync::Arc;
 
+const KEY: char = 'k';
+
 type RequestId = usize;
+type Key = char;
 type Value = char;
 
 mod map;
@@ -55,8 +58,7 @@ impl Actor for Peer {
         o: &mut Out<Self>,
     ) {
         match msg {
-            MyRegisterMsg::Put(id, value) => {
-                let key = 'b';
+            MyRegisterMsg::Put(id, key, value) => {
                 // apply the op locally
                 let timestamp = state.to_mut().set(key, value);
 
@@ -72,14 +74,13 @@ impl Actor for Peer {
                     }),
                 )
             }
-            MyRegisterMsg::Get(id) => {
-                if let Some(value) = state.get(&'b') {
+            MyRegisterMsg::Get(id, key) => {
+                if let Some(value) = state.get(&key) {
                     // respond to the query (not totally necessary for this)
                     o.send(src, MyRegisterMsg::GetOk(id, *value))
                 }
             }
-            MyRegisterMsg::Delete(id) => {
-                let key = 'b';
+            MyRegisterMsg::Delete(id, key) => {
                 // apply the op locally
                 let timestamp = state.to_mut().delete(&key);
 
@@ -144,11 +145,11 @@ enum MyRegisterMsg {
     Internal(PeerMsg),
 
     /// Indicates that a value should be written.
-    Put(RequestId, Value),
+    Put(RequestId, Key, Value),
     /// Indicates that a value should be retrieved.
-    Get(RequestId),
+    Get(RequestId, Key),
     /// Indicates that a value should be deleted.
-    Delete(RequestId),
+    Delete(RequestId, Key),
 
     /// Indicates a successful `Put`. Analogous to an HTTP 2XX.
     PutOk(RequestId),
@@ -183,7 +184,7 @@ impl Actor for MyRegisterActor {
                     let value = (b'A' + (index % server_count) as u8) as char;
                     o.send(
                         Id::from(index % server_count),
-                        MyRegisterMsg::Put(unique_request_id, value),
+                        MyRegisterMsg::Put(unique_request_id, KEY, value),
                     );
                     MyRegisterActorState::PutClient {
                         awaiting: Some(unique_request_id),
@@ -212,7 +213,7 @@ impl Actor for MyRegisterActor {
                     let unique_request_id = index; // next will be 2 * index
                     o.send(
                         Id::from(index % server_count),
-                        MyRegisterMsg::Delete(unique_request_id),
+                        MyRegisterMsg::Delete(unique_request_id, KEY),
                     );
                     MyRegisterActorState::DeleteClient {
                         awaiting: Some(unique_request_id),
@@ -267,7 +268,7 @@ impl Actor for MyRegisterActor {
                             let value = (b'Z' - (index % server_count) as u8) as char;
                             o.send(
                                 Id::from(index % server_count),
-                                MyRegisterMsg::Put(unique_request_id, value),
+                                MyRegisterMsg::Put(unique_request_id, KEY, value),
                             );
                             *state = Cow::Owned(MyRegisterActorState::PutClient {
                                 awaiting: Some(unique_request_id),
@@ -276,7 +277,7 @@ impl Actor for MyRegisterActor {
                         } else if *intermediate_gets {
                             o.send(
                                 Id::from(index % server_count),
-                                MyRegisterMsg::Get(unique_request_id),
+                                MyRegisterMsg::Get(unique_request_id, KEY),
                             );
                             *state = Cow::Owned(MyRegisterActorState::PutClient {
                                 awaiting: Some(unique_request_id),
@@ -300,9 +301,9 @@ impl Actor for MyRegisterActor {
                     MyRegisterMsg::PutOk(_) => {}
                     MyRegisterMsg::GetOk(_, _) => {}
                     MyRegisterMsg::DeleteOk(_) => {}
-                    MyRegisterMsg::Put(_, _) => {}
-                    MyRegisterMsg::Get(_) => {}
-                    MyRegisterMsg::Delete(_) => {}
+                    MyRegisterMsg::Put(_, _, _) => {}
+                    MyRegisterMsg::Get(_, _) => {}
+                    MyRegisterMsg::Delete(_, _) => {}
                     MyRegisterMsg::Internal(_) => {}
                 }
             }
@@ -333,12 +334,12 @@ impl Actor for MyRegisterActor {
                         if *op_count < *delete_count {
                             o.send(
                                 Id::from(index % server_count),
-                                MyRegisterMsg::Delete(unique_request_id),
+                                MyRegisterMsg::Delete(unique_request_id, KEY),
                             );
                         } else if *intermediate_gets {
                             o.send(
                                 Id::from(index % server_count),
-                                MyRegisterMsg::Get(unique_request_id),
+                                MyRegisterMsg::Get(unique_request_id, KEY),
                             );
                             *state = Cow::Owned(MyRegisterActorState::DeleteClient {
                                 awaiting: Some(unique_request_id),
@@ -353,9 +354,9 @@ impl Actor for MyRegisterActor {
                     }
                     MyRegisterMsg::GetOk(_, _) => {}
                     MyRegisterMsg::DeleteOk(_) => {}
-                    MyRegisterMsg::Put(_, _) => {}
-                    MyRegisterMsg::Get(_) => {}
-                    MyRegisterMsg::Delete(_) => {}
+                    MyRegisterMsg::Put(_, _, _) => {}
+                    MyRegisterMsg::Get(_, _) => {}
+                    MyRegisterMsg::Delete(_, _) => {}
                     MyRegisterMsg::Internal(_) => {}
                 }
             }
@@ -538,9 +539,9 @@ fn syncing_done_and_in_sync(state: &ActorModelState<MyRegisterActor>) -> bool {
             MyRegisterMsg::Internal(PeerMsg::DeleteSync { .. }) => {
                 return true;
             }
-            MyRegisterMsg::Put(_, _)
-            | MyRegisterMsg::Get(_)
-            | MyRegisterMsg::Delete(_)
+            MyRegisterMsg::Put(_, _, _)
+            | MyRegisterMsg::Get(_, _)
+            | MyRegisterMsg::Delete(_, _)
             | MyRegisterMsg::PutOk(_)
             | MyRegisterMsg::GetOk(_, _)
             | MyRegisterMsg::DeleteOk(_) => {}
