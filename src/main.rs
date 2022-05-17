@@ -17,13 +17,13 @@ use std::sync::Arc;
 type Timestamp = (u32, usize);
 
 #[derive(Clone, Debug, Hash, PartialEq, Eq)]
-struct TC {
+struct Map {
     actor_id: Id,
     max_op: u32,
     values: BTreeSet<(Timestamp, char, char)>,
 }
 
-impl TC {
+impl Map {
     fn new(actor_id: Id) -> Self {
         Self {
             actor_id,
@@ -120,7 +120,7 @@ enum PeerMsg {
 impl Actor for Peer {
     type Msg = RegisterMsg<u64, char, PeerMsg>;
 
-    type State = TC;
+    type State = Map;
 
     fn on_start(&self, id: Id, _o: &mut Out<Self>) -> Self::State {
         Self::State::new(id)
@@ -216,7 +216,7 @@ impl ModelCfg {
     }
 }
 
-fn all_same_state(actors: &[Arc<RegisterActorState<TC, u64>>]) -> bool {
+fn all_same_state(actors: &[Arc<RegisterActorState<Map, u64>>]) -> bool {
     actors.windows(2).all(|w| match (&*w[0], &*w[1]) {
         (RegisterActorState::Client { .. }, RegisterActorState::Client { .. }) => true,
         (RegisterActorState::Client { .. }, RegisterActorState::Server(_)) => true,
@@ -225,7 +225,7 @@ fn all_same_state(actors: &[Arc<RegisterActorState<TC, u64>>]) -> bool {
     })
 }
 
-fn only_one_of_each_key(actors: &[Arc<RegisterActorState<TC, u64>>]) -> bool {
+fn only_one_of_each_key(actors: &[Arc<RegisterActorState<Map, u64>>]) -> bool {
     for actor in actors {
         if let RegisterActorState::Server(actor) = &**actor {
             let keys = actor
