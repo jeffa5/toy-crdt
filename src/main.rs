@@ -14,29 +14,17 @@ use std::fmt::Debug;
 use std::hash::Hash;
 use std::sync::Arc;
 
-pub type Timestamp = (u32, usize);
-
-#[derive(Debug, Clone)]
-pub enum Op {
-    Set {
-        timestamp: Timestamp,
-        key: char,
-        value: char,
-    },
-    Delete {
-        timestamp: Timestamp,
-    },
-}
+type Timestamp = (u32, usize);
 
 #[derive(Clone, Debug, Hash, PartialEq, Eq)]
-pub struct TC {
+struct TC {
     actor_id: Id,
     max_op: u32,
     values: BTreeSet<(Timestamp, char, char)>,
 }
 
 impl TC {
-    pub fn new(actor_id: Id) -> Self {
+    fn new(actor_id: Id) -> Self {
         Self {
             actor_id,
             max_op: 0,
@@ -44,14 +32,14 @@ impl TC {
         }
     }
 
-    pub fn get(&self, k: &char) -> Option<&char> {
+    fn get(&self, k: &char) -> Option<&char> {
         self.values
             .iter()
             .find(|(_, kp, _)| k == kp)
             .map(|(_, _, v)| v)
     }
 
-    pub fn set(&mut self, key: char, v: char) -> Timestamp {
+    fn set(&mut self, key: char, v: char) -> Timestamp {
         let t = self.new_timestamp();
         // remove the old value from ourselves if there was one
         if let Some(previous) = self.values.iter().find(|(_t, k, _v)| k == &key).cloned() {
@@ -62,7 +50,7 @@ impl TC {
         t
     }
 
-    pub fn delete(&mut self, key: &char) -> Option<Timestamp> {
+    fn delete(&mut self, key: &char) -> Option<Timestamp> {
         if let Some((t, k, v)) = self.values.iter().find(|(_, kp, _)| key == kp).cloned() {
             // add it to ourselves
             self.values.remove(&(t, k, v));
@@ -72,7 +60,7 @@ impl TC {
         }
     }
 
-    pub fn receive_set(&mut self, timestamp: Timestamp, key: char, value: char) {
+    fn receive_set(&mut self, timestamp: Timestamp, key: char, value: char) {
         self.update_max_op(timestamp);
         let previous = self
             .values
@@ -89,7 +77,7 @@ impl TC {
         }
     }
 
-    pub fn receive_delete(&mut self, timestamp: Timestamp) {
+    fn receive_delete(&mut self, timestamp: Timestamp) {
         self.update_max_op(timestamp);
         if let Some(tuple) = self
             .values
@@ -113,12 +101,12 @@ impl TC {
     }
 }
 
-pub struct Peer {
+struct Peer {
     peers: Vec<Id>,
 }
 
 #[derive(Clone, Debug, Hash, PartialEq, Eq)]
-pub enum PeerMsg {
+enum PeerMsg {
     PutSync {
         timestamp: Timestamp,
         key: char,
