@@ -2,6 +2,7 @@ use clap::Parser;
 use map::Map;
 use map::Timestamp;
 use map_broken::BrokenMap;
+use map_fixed::FixedMap;
 use stateright::actor::model_peers;
 use stateright::actor::Actor;
 use stateright::actor::ActorModel;
@@ -9,6 +10,7 @@ use stateright::actor::ActorModelState;
 use stateright::actor::Network;
 use stateright::actor::Out;
 use stateright::Checker;
+use stateright::CheckerBuilder;
 use stateright::{actor::Id, Model};
 use std::borrow::Cow;
 use std::collections::HashSet;
@@ -593,6 +595,10 @@ struct Opts {
 
     #[clap(long, global = true)]
     intermediate_gets: bool,
+
+    /// Use the broken map.
+    #[clap(long)]
+    broken: bool,
 }
 
 #[derive(clap::Subcommand)]
@@ -605,16 +611,35 @@ enum SubCmd {
 fn main() {
     let opts = Opts::parse();
 
-    let model = ModelCfg {
-        put_clients: opts.put_clients,
-        delete_clients: opts.delete_clients,
-        servers: opts.servers,
-        intermediate_gets: opts.intermediate_gets,
+    if opts.broken {
+        let model = ModelCfg {
+            put_clients: opts.put_clients,
+            delete_clients: opts.delete_clients,
+            servers: opts.servers,
+            intermediate_gets: opts.intermediate_gets,
+        }
+        .into_actor_model::<BrokenMap>()
+        .checker()
+        .threads(num_cpus::get());
+        run(opts, model)
+    } else {
+        let model = ModelCfg {
+            put_clients: opts.put_clients,
+            delete_clients: opts.delete_clients,
+            servers: opts.servers,
+            intermediate_gets: opts.intermediate_gets,
+        }
+        .into_actor_model::<FixedMap>()
+        .checker()
+        .threads(num_cpus::get());
+        run(opts, model)
     }
-    .into_actor_model::<BrokenMap>()
-    .checker()
-    .threads(num_cpus::get());
+}
 
+fn run<M: Clone + Debug + PartialEq + Hash + Send + Sync + 'static + Map>(
+    opts: Opts,
+    model: CheckerBuilder<ActorModel<MyRegisterActor<M>>>,
+) {
     match opts.command {
         SubCmd::Serve => {
             println!("Serving web ui on http://127.0.0.1:8080");
