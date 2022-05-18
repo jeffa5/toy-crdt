@@ -29,5 +29,5 @@ cargo run --release -- serve # shows that the bug does get fixed with the update
 ```
 
 ```sh
-cargo run --release -- serve --servers 3 # shows a new bug due to delete's context not staying around
+cargo run --release -- serve --servers 3 # shows a new bug due to delete's context not staying around, caused by not having causal broadcast!
 ```
