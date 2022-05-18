@@ -42,6 +42,7 @@ impl Map for FixedMap {
     }
 
     fn visible_values(&self) -> Vec<(Timestamp, char, char)> {
+        // TODO: generalise this for multiple keys
         let big_t = self.values.iter().map(|(t, _k, _)| t).collect::<Vec<_>>();
 
         if big_t.is_empty() {
