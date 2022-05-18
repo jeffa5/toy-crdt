@@ -534,7 +534,7 @@ fn all_same_state<M: Clone + Debug + PartialEq + Hash + Map>(
         (MyRegisterActorState::Server(_), MyRegisterActorState::PutClient { .. }) => true,
         (MyRegisterActorState::Server(_), MyRegisterActorState::DeleteClient { .. }) => true,
         (MyRegisterActorState::Server(a), MyRegisterActorState::Server(b)) => {
-            a.values() == b.values()
+            a.visible_values() == b.visible_values()
         }
     })
 }

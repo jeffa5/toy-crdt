@@ -40,6 +40,22 @@ impl Map for FixedMap {
     fn values(&self) -> Vec<(Timestamp, char, char)> {
         self.values.iter().cloned().collect()
     }
+
+    fn visible_values(&self) -> Vec<(Timestamp, char, char)> {
+        let big_t = self.values.iter().map(|(t, _k, _)| t).collect::<Vec<_>>();
+
+        if big_t.is_empty() {
+            vec![]
+        } else {
+            let max_t = big_t.iter().max().unwrap();
+            self.values
+                .iter()
+                .find(|(t, _kp, _)| &t == max_t)
+                .cloned()
+                .map(|i| vec![i])
+                .unwrap_or_default()
+        }
+    }
 }
 
 #[derive(Clone, Debug, Hash, PartialEq, Eq)]

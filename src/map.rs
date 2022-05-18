@@ -22,4 +22,6 @@ pub(crate) trait Map {
     fn receive_delete(&mut self, context: Vec<Timestamp>);
 
     fn values(&self) -> Vec<(Timestamp, char, char)>;
+
+    fn visible_values(&self) -> Vec<(Timestamp, char, char)>;
 }

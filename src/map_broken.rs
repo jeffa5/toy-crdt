@@ -39,6 +39,10 @@ impl Map for BrokenMap {
     fn values(&self) -> Vec<(Timestamp, char, char)> {
         self.values.iter().cloned().collect()
     }
+
+    fn visible_values(&self) -> Vec<(Timestamp, char, char)> {
+        self.values()
+    }
 }
 
 #[derive(Clone, Debug, Hash, PartialEq, Eq)]
