@@ -17,3 +17,17 @@ cargo run --release -- serve
 ```sh
 cargo run --release -- check-bfs # or check-dfs
 ```
+
+## Interesting runs
+
+```sh
+cargo run --release -- serve --broken # shows the original bug from the twitter post
+```
+
+```sh
+cargo run --release -- serve # shows that the bug does get fixed with the updated version
+```
+
+```sh
+cargo run --release -- serve --servers 3 # shows a new bug due to delete's context not staying around
+```
