@@ -126,13 +126,13 @@ enum MyRegisterActor<M> {
     PutClient {
         put_count: usize,
         /// Whether to send a get request after each mutation
-        intermediate_gets: bool,
+        follow_up_gets: bool,
         server_count: usize,
     },
     DeleteClient {
         delete_count: usize,
         /// Whether to send a get request after each mutation
-        intermediate_gets: bool,
+        follow_up_gets: bool,
         server_count: usize,
     },
     Server(Peer<M>),
@@ -187,7 +187,7 @@ where
             MyRegisterActor::PutClient {
                 put_count,
                 // don't issue reads from this so don't worry about this
-                intermediate_gets: _,
+                follow_up_gets: _,
                 server_count,
             } => {
                 let server_count = *server_count;
@@ -217,7 +217,7 @@ where
             }
             MyRegisterActor::DeleteClient {
                 delete_count,
-                intermediate_gets: _,
+                follow_up_gets: _,
                 server_count,
             } => {
                 let server_count = *server_count;
@@ -269,7 +269,7 @@ where
             (
                 A::PutClient {
                     put_count,
-                    intermediate_gets,
+                    follow_up_gets,
                     server_count,
                 },
                 S::PutClient {
@@ -292,7 +292,7 @@ where
                                 awaiting: Some(unique_request_id),
                                 op_count: op_count + 1,
                             });
-                        } else if *intermediate_gets {
+                        } else if *follow_up_gets {
                             o.send(
                                 Id::from(index % server_count),
                                 MyRegisterMsg::Get(unique_request_id, KEY),
@@ -328,7 +328,7 @@ where
             (
                 A::DeleteClient {
                     delete_count,
-                    intermediate_gets,
+                    follow_up_gets,
                     server_count,
                 },
                 S::DeleteClient {
@@ -354,7 +354,7 @@ where
                                 Id::from(index % server_count),
                                 MyRegisterMsg::Delete(unique_request_id, KEY),
                             );
-                        } else if *intermediate_gets {
+                        } else if *follow_up_gets {
                             o.send(
                                 Id::from(index % server_count),
                                 MyRegisterMsg::Get(unique_request_id, KEY),
@@ -394,7 +394,7 @@ where
             (
                 A::PutClient {
                     put_count: _,
-                    intermediate_gets: _,
+                    follow_up_gets: _,
                     server_count: _,
                 },
                 S::PutClient {
@@ -405,7 +405,7 @@ where
             (
                 A::DeleteClient {
                     delete_count: _,
-                    intermediate_gets: _,
+                    follow_up_gets: _,
                     server_count: _,
                 },
                 S::DeleteClient {
@@ -416,7 +416,7 @@ where
             (
                 A::PutClient {
                     put_count: _,
-                    intermediate_gets: _,
+                    follow_up_gets: _,
                     server_count: _,
                 },
                 S::DeleteClient {
@@ -427,7 +427,7 @@ where
             (
                 A::DeleteClient {
                     delete_count: _,
-                    intermediate_gets: _,
+                    follow_up_gets: _,
                     server_count: _,
                 },
                 S::PutClient {
@@ -467,7 +467,7 @@ struct ModelCfg {
     put_clients: usize,
     delete_clients: usize,
     servers: usize,
-    intermediate_gets: bool,
+    follow_up_gets: bool,
 }
 
 impl ModelCfg {
@@ -485,7 +485,7 @@ impl ModelCfg {
         for _ in 0..self.put_clients {
             model = model.actor(MyRegisterActor::PutClient {
                 put_count: 2,
-                intermediate_gets: self.intermediate_gets,
+                follow_up_gets: self.follow_up_gets,
                 server_count: self.servers,
             })
         }
@@ -493,7 +493,7 @@ impl ModelCfg {
         for _ in 0..self.delete_clients {
             model = model.actor(MyRegisterActor::DeleteClient {
                 delete_count: 2,
-                intermediate_gets: self.intermediate_gets,
+                follow_up_gets: self.follow_up_gets,
                 server_count: self.servers,
             })
         }
@@ -597,7 +597,7 @@ struct Opts {
     servers: usize,
 
     #[clap(long, global = true)]
-    intermediate_gets: bool,
+    follow_up_gets: bool,
 
     /// Use the broken map.
     #[clap(long, global = true)]
@@ -619,7 +619,7 @@ fn main() {
             put_clients: opts.put_clients,
             delete_clients: opts.delete_clients,
             servers: opts.servers,
-            intermediate_gets: opts.intermediate_gets,
+            follow_up_gets: opts.follow_up_gets,
         }
         .into_actor_model::<BrokenMap>()
         .checker()
@@ -630,7 +630,7 @@ fn main() {
             put_clients: opts.put_clients,
             delete_clients: opts.delete_clients,
             servers: opts.servers,
-            intermediate_gets: opts.intermediate_gets,
+            follow_up_gets: opts.follow_up_gets,
         }
         .into_actor_model::<FixedMap>()
         .checker()
